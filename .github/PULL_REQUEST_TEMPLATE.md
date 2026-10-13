@@ -16,3 +16,9 @@
 ## How you verified it
 
 <!-- `cargo test` output at minimum. If you also live-verified against testnet, say what you deployed/called and link the transaction. -->
+
+> ⚠️ **CI checks are maintainer-managed.** Do not add, remove, rename, or
+> reconfigure any CI check or workflow in this PR (including the auto-merge
+> bot). CI is part of the protocol's safety story and changes to it go
+> through the maintainers only. If you believe a check needs changing, open
+> an issue instead.

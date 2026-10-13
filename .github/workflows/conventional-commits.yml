@@ -1,0 +1,24 @@
+name: Conventional Commits gate
+
+# The check-run name is the JOB name ("Conventional Commits") and is listed in
+# the auto-merge bot's REQUIRED_CHECKS (.github/workflows/auto-merge.yml).
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  conventional-commits:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    # Gate to pull requests only. Direct maintainer pushes to main (e.g. GitHub
+    # web-editor commits such as "Update README.md") are not Conventional Commits
+    # and would otherwise fail every direct push. The gate still protects every
+    # contributor PR, which is where it adds value.
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - uses: wagoid/commitlint-github-action@b948419dd99f3fd78a6548d48f94e3df7f6bf3ed # v6
