@@ -41,7 +41,7 @@ pub trait Contract {
     fn lastprice(asset: Asset) -> Option<PriceData>;
 }
 
-#[contracttype(export = false)]
+#[contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub enum Asset {
     /// A Stellar Classic or Soroban asset, by contract address.
@@ -51,7 +51,7 @@ pub enum Asset {
     Other(Symbol),
 }
 
-#[contracttype(export = false)]
+#[contracttype]
 #[derive(Debug, Clone, Eq, PartialEq, Ord, PartialOrd)]
 pub struct PriceData {
     pub price: i128,
