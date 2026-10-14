@@ -129,7 +129,7 @@
                             "symbol": "member_hash"
                           },
                           "val": {
-                            "bytes": "d786c56aadf4f7d0869f37eeb309d1238cf9c76da79200740e10781b72e2484b"
+                            "bytes": "7272d10159b6d2a7202e7e723c7637bd83b65a37fc1871cb9a5c08ce739e502d"
                           }
                         },
                         {
@@ -153,7 +153,7 @@
     ]
   ],
   "ledger": {
-    "protocol_version": 27,
+    "protocol_version": 28,
     "sequence_number": 0,
     "timestamp": 0,
     "network_id": "0000000000000000000000000000000000000000000000000000000000000000",
@@ -275,7 +275,7 @@
               "val": {
                 "contract_instance": {
                   "executable": {
-                    "wasm": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+                    "wasm": "95616f137b71f2524c5c1a9911d7c51abf81930f93f7a6cae2fa8967c03d14fb"
                   },
                   "storage": [
                     {
@@ -295,7 +295,7 @@
                                   "symbol": "member_hash"
                                 },
                                 "val": {
-                                  "bytes": "d786c56aadf4f7d0869f37eeb309d1238cf9c76da79200740e10781b72e2484b"
+                                  "bytes": "7272d10159b6d2a7202e7e723c7637bd83b65a37fc1871cb9a5c08ce739e502d"
                                 }
                               },
                               {
@@ -768,8 +768,8 @@
           "data": {
             "contract_code": {
               "ext": "v0",
-              "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-              "code": ""
+              "hash": "95616f137b71f2524c5c1a9911d7c51abf81930f93f7a6cae2fa8967c03d14fb",
+              "code": "746573745f636f6e74726163745f666f725f636f6e74726163745f69645f434141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414141414d445234"
             }
           },
           "ext": "v0"
