@@ -624,6 +624,11 @@ impl EscrowContract {
     /// commitment shape, not a decision this session is making
     /// unilaterally. Cooperative-gated, not buyer-consented — this is the
     /// cooperative's own membership data, not a term the buyer negotiates.
+    ///
+    /// **Independence from delivery grading**: the member list and its count
+    /// are strictly internal to cooperative entitlement tracking and have no
+    /// coupling with `confirm_delivery`'s `grade_index` (which indexes the
+    /// quality pricing schedule `grade_price_bps`).
     pub fn set_allocation(env: Env, members: Vec<AllocationMember>) -> Result<(), Error> {
         let c = Self::load(&env)?;
         if c.status != Status::Draft {
