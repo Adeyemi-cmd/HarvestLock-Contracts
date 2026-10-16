@@ -121,9 +121,8 @@ last session: `initialize` (now also takes `remainder_window_secs` and
 `reclaim_advance_1`/`_2`, `mark_checkpoint`, `settle`, `get_status`,
 `get_commitment`.
 
-Tests (`src/test.rs`, **58 tests, all passing, zero clippy warnings** beyond
-the inherent, unavoidable `too_many_arguments` on `initialize` — one field
-per commitment property) cover, beyond last session's set: `lock` escrows
+Tests (`src/test.rs`, **129 tests, all passing** — see the "Last updated"
+entry for the count's history) cover, beyond last session's set: `lock` escrows
 only the deposit, not the full total; `ready_for_delivery` opens the window
 and is cooperative-gated; `fund_remainder` transfers exactly the remainder,
 rejects before `ReadyForDelivery`, rejects a second call, rejects after the
@@ -618,6 +617,21 @@ so nobody "fixes" them without knowing what they're trading off.
   no funds, and the recipient/amount of any later claim are fixed at
   `initialize` regardless of who calls `release_advance_*`. There's no
   privilege to gate.
+- **Why multi-party functions call `require_once_each`, not a raw
+  `require_auth()` per named party**: Soroban's auth manager rejects a
+  *second* `require_auth()` for the **same** address within a single call
+  frame (`Auth/InvalidAction`) — the frame is already marked authorized and
+  there's no further matching entry left to consume. When one principal
+  legitimately holds two of a commitment's named roles (a cooperative that
+  also operates the warehouse; a buyer that is also the cooperative), asking
+  twice aborts the whole invocation, turning a valid single-signature
+  authorization into a hard failure. `cancel`, `reassign_buyer`, and
+  `resolve_dispute` therefore route their multi-party checks through
+  `require_once_each`, which calls `require_auth()` once per *distinct*
+  address. This was latent because every auth test ran under `mock_all_auths()`,
+  whose recording mode tolerates the duplicate; the `#139`/`#140` tests use
+  `mock_auths(&[...])` with explicit per-address entries to pin the enforcing
+  behavior.
 - **Why `mark_checkpoint`/`confirm_delivery` *are* auth-gated to the
   warehouse operator**: these represent a judgment call by a specific
   trusted party (PRD §4.1 — the warehouse operator is the enforcement
@@ -783,7 +797,27 @@ if it doesn't, trust the code and the test output over this file, and fix
 this file to match before doing anything else.
 
 ---
-*Last updated: 16 Oct 2026 — audited Commitment struct on-chain footprint (#143): conducted a comprehensive field-by-field necessity review across all 32 fields. Confirmed that every field serves an active role in state transition enforcement, auth checks, financial payout calculations, or dispute recovery, and cannot be derived off-chain because smart contracts cannot query historical events. Retained struct as-is to preserve off-chain API compatibility and avoid instruction overhead from bitmask packing. Documented findings in `lib.rs` and added initialization invariant test coverage in `test.rs`.
+*Last updated: 16 Oct 2026 — auth-model scrutiny of the staged multi-party
+Soroban flow (#138–#141). **#138**: proven a staged auth entry whose
+`signature_expiration_ledger` lapses is rejected *by the host*, before the
+contract body runs — it surfaces as a host auth/`InvokeError::Abort`, not a
+contract-returned `Error`, and the aborted invocation leaves no partial
+state (the expiry check is atomic with the call). **#140/#141**: proven
+`resolve_dispute`'s three-party check genuinely needs three *distinct*
+signatures when the parties are distinct, that a `MockAuth` entry scoped to
+one `fn_name`/argument set cannot authorize a different method or a
+different argument set, and that a stranger's signature satisfies no role.
+**#139 surfaced a real bug**: calling `require_auth()` twice for the same
+address in one call frame fails under enforcing auth (`Auth/InvalidAction`)
+even though `mock_all_auths()` tolerates it — so `cancel` (buyer ==
+cooperative), `reassign_buyer`, and `resolve_dispute` were broken on-chain
+for a single principal holding overlapping roles. Fixed with an internal
+`require_once_each` helper that calls `require_auth()` once per distinct
+address; the three methods now route their multi-party checks through it.
+8 new unit tests (129/129 total), all under explicit `mock_auths(&[...])`
+rather than `mock_all_auths()` so rejection is actually observable.
+
+Prior entry: 16 Oct 2026 — audited Commitment struct on-chain footprint (#143): conducted a comprehensive field-by-field necessity review across all 32 fields. Confirmed that every field serves an active role in state transition enforcement, auth checks, financial payout calculations, or dispute recovery, and cannot be derived off-chain because smart contracts cannot query historical events. Retained struct as-is to preserve off-chain API compatibility and avoid instruction overhead from bitmask packing. Documented findings in `lib.rs` and added initialization invariant test coverage in `test.rs`.
 
 Prior entry: 6 Sept 2026 (later same day) — dispute flagging with
 defined escalation (PRD must-have), Deployment 10:

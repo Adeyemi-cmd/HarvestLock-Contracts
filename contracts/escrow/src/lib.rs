@@ -1204,8 +1204,7 @@ impl EscrowContract {
             | Status::ReadyForDelivery => {}
             _ => return Err(Error::InvalidState),
         }
-        c.buyer.require_auth();
-        c.cooperative.require_auth();
+        Self::require_once_each(&[&c.buyer, &c.cooperative]);
 
         // Effects before interaction — see `lock`'s comment for why.
         c.status = Status::Cancelled;
@@ -1252,9 +1251,7 @@ impl EscrowContract {
             | Status::ReadyForDelivery => {}
             _ => return Err(Error::InvalidState),
         }
-        c.buyer.require_auth();
-        c.cooperative.require_auth();
-        new_buyer.require_auth();
+        Self::require_once_each(&[&c.buyer, &c.cooperative, &new_buyer]);
 
         c.buyer = new_buyer;
         Self::save(&env, &c);
@@ -1331,9 +1328,7 @@ impl EscrowContract {
         if c.status != Status::Disputed {
             return Err(Error::InvalidState);
         }
-        c.buyer.require_auth();
-        c.cooperative.require_auth();
-        c.warehouse_operator.require_auth();
+        Self::require_once_each(&[&c.buyer, &c.cooperative, &c.warehouse_operator]);
 
         c.status = c.dispute_pre_status;
         c.dispute_pre_status = Status::Draft;
@@ -1393,6 +1388,29 @@ impl EscrowContract {
 
     fn bps_amount(total: i128, bps: u32) -> i128 {
         total * (bps as i128) / 10_000
+    }
+
+    /// Calls `require_auth()` once per distinct address, in first-seen order.
+    ///
+    /// Soroban's auth manager rejects a *second* `require_auth()` for the same
+    /// address within a single call frame: the frame is already marked
+    /// authorized and there is no further matching auth entry left to consume,
+    /// so the host raises `Auth/InvalidAction` and the whole invocation aborts.
+    /// When one address legitimately holds two of a commitment's named roles —
+    /// a cooperative that also operates the warehouse, the realistic
+    /// two-of-three case — blindly asking twice turns a valid single-signature
+    /// authorization into a hard failure. Every multi-party check in this
+    /// contract routes through here rather than calling `require_auth()`
+    /// directly. The behavior is pinned by the `#139`/`#140` auth tests, which
+    /// exercise it against genuinely distinct `MockAuth` entries instead of
+    /// `mock_all_auths()` (whose recording mode silently tolerates the
+    /// duplicate).
+    fn require_once_each(addresses: &[&Address]) {
+        for (i, addr) in addresses.iter().enumerate() {
+            if addresses[..i].iter().all(|seen| seen != addr) {
+                addr.require_auth();
+            }
+        }
     }
 
     /// The portion of `total_amount` that `lock` actually escrows —
