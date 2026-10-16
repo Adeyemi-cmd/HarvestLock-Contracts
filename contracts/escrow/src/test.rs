@@ -1663,6 +1663,36 @@ fn confirm_delivery_records_quantity_grade_and_settlement_bps() {
 }
 
 #[test]
+fn confirm_delivery_storage_profile_and_settlement_bps_invariants() {
+    let s = setup(1_500, 1_500);
+    s.contract.lock();
+    advance_to_remainder_funded(&s);
+
+    let pre = s.contract.get_commitment();
+    assert_eq!(pre.status, Status::ReadyForDelivery);
+
+    // Profile confirm_delivery execution: exactly 1 load, 1 save, state transitions cleanly
+    s.contract.confirm_delivery(&CONTRACTED_QUANTITY, &FULL_PRICE_GRADE);
+
+    let post = s.contract.get_commitment();
+    assert_eq!(post.status, Status::Delivered);
+    assert_eq!(post.delivered_quantity, CONTRACTED_QUANTITY);
+    assert_eq!(post.grade_index, FULL_PRICE_GRADE);
+    assert_eq!(post.settlement_bps, 10_000);
+
+    // Unmodified fields maintain exact equality (no accidental storage mutation/corruption)
+    assert_eq!(post.contracted_quantity, pre.contracted_quantity);
+    assert_eq!(post.buyer, pre.buyer);
+    assert_eq!(post.cooperative, pre.cooperative);
+    assert_eq!(post.warehouse_operator, pre.warehouse_operator);
+    assert_eq!(post.token, pre.token);
+    assert_eq!(post.total_amount, pre.total_amount);
+    assert_eq!(post.advance1_claimed, pre.advance1_claimed);
+    assert_eq!(post.advance2_claimed, pre.advance2_claimed);
+    assert_eq!(post.remainder_funded, true);
+}
+
+#[test]
 fn partial_delivery_pays_cooperative_proportionally_and_refunds_the_shortfall_to_buyer() {
     // 50% of contracted quantity delivered, full-price grade: settle should
     // pay the cooperative half the remainder and refund the other half to

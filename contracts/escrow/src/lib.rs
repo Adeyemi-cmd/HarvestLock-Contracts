@@ -904,13 +904,14 @@ impl EscrowContract {
     /// — a grade or quantity dispute is the operator's own appeals
     /// process, not a HarvestLock dispute (PRD's edge-case table).
     ///
-    /// **Independence from allocation ledger**: `grade_index` indexes
-    /// strictly into the pre-agreed quality tier schedule `grade_price_bps`
-    /// (PRD §7 commodity grading) and is completely independent of the
-    /// cooperative's member allocation ledger (`set_allocation`). Quality
-    /// tier selection is never validated against member count: member count
-    /// tracks farmer pooling shares off-chain, whereas `grade_index` reflects
-    /// commodity quality at warehouse delivery.
+    /// **Storage access pattern**:
+    /// Reads the `Commitment` struct exactly once from instance storage upon
+    /// entry via `Self::load`. All validation checks, shortfall scaling, and
+    /// `settlement_bps` multiplier calculations execute strictly in memory.
+    /// Writes the updated `Commitment` struct exactly once to instance storage
+    /// via `Self::save` upon state transition to `Status::Delivered`. No
+    /// redundant reads or writes occur across the quantity/grade calculation
+    /// or final state-write.
     pub fn confirm_delivery(env: Env, delivered_quantity: u32, grade_index: u32) -> Result<(), Error> {
         let mut c = Self::load(&env)?;
         if c.status != Status::ReadyForDelivery {
