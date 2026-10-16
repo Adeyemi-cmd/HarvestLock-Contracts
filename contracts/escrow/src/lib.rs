@@ -319,6 +319,34 @@ enum Tranche {
     Two,
 }
 
+/// On-chain state for a single escrow commitment instance.
+///
+/// **Footprint Audit & Storage Necessity Finding**:
+/// A comprehensive review of every field in this struct confirmed that all 32
+/// fields are genuinely necessary in on-chain instance storage and cannot be
+/// moved off-chain or derived from events:
+/// 1. **Auth & Token Routing** (`buyer`, `cooperative`, `warehouse_operator`, `token`):
+///    Enforces `require_auth()` and routes token transfers across every lifecycle call.
+/// 2. **Financial Terms & Schedules** (`total_amount`, `advance1_bps`, `advance2_bps`,
+///    `claim_window_secs`, `remainder_window_secs`, `delivery_deadline`, `contracted_quantity`,
+///    `grade_price_bps`):
+///    Smart contracts cannot query historical event logs; every guard, deadline check,
+///    and settlement payout equation requires these baseline terms on-chain.
+/// 3. **State & Lifecycle Flags** (`status`, `created_at`, `advance1_deadline`,
+///    `advance1_claimed`, `advance1_expired`, `advance2_deadline`, `advance2_claimed`,
+///    `advance2_expired`, `remainder_deadline`, `remainder_funded`):
+///    Enforces single-claim/reclaim semantics, prevents double withdrawals, and gates
+///    subsequent state transitions without trusting off-chain assertions.
+/// 4. **Attestation & Settlement** (`delivered_quantity`, `grade_index`, `settlement_bps`):
+///    Warehouse delivery attestation data consumed by `settle` to calculate proportional payout.
+/// 5. **Oracle/FX & Dispute State** (`fx_resolved`, `fx_adjusted_total`, `fx_shortfall_amount`,
+///    `fx_shortfall_funded`, `fx_shortfall_deadline`, `dispute_pre_status`, `dispute_deadline`):
+///    Enforces dispute freeze/recovery and bounds oracle currency adjustments.
+///
+/// Furthermore, `get_commitment` returns this entire struct to off-chain indexers and `api/`.
+/// Bitfield compression was evaluated and rejected: packing booleans would break canonical
+/// Soroban ScVal ABI compatibility and increase CPU instruction costs for negligible storage gains.
+/// Finding: retain struct fields as-is.
 #[contracttype]
 #[derive(Clone)]
 pub struct Commitment {
