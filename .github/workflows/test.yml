@@ -7,9 +7,9 @@ on:
 
 # Explicit least-privilege token, not relying on the repo/org default
 # (currently "read" too, checked directly -- but shouldn't depend on
-# that staying true). Neither job pushes, comments, or writes
-# anything -- checkout, cargo test, and stellar contract build all
-# only need read access.
+# that staying true). No job pushes, comments, or writes anything --
+# checkout, the static guard scripts, cargo test, and stellar contract
+# build all only need read access.
 permissions:
   contents: read
 
@@ -77,3 +77,30 @@ jobs:
       - name: stellar contract build
         working-directory: .
         run: stellar contract build
+
+  # Regression safety nets one layer up from `cargo test`: both guard a
+  # class of problem no single hand-written test is positioned to catch
+  # once the offending PR is already merged.
+  check-error-discriminants:
+    name: error discriminants
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fails if any `#[contracterror] Error` variant is inserted before an
+      # existing one (a non-terminal discriminant shift), renumbered, or
+      # removed -- see the script's own comment block for the exact rules.
+      - name: Guard Error discriminant numbering
+        run: bash .github/scripts/check_error_discriminants.sh
+
+  check-auth-docs:
+    name: auth doc comments
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Fails if a public method's doc comment never names its required auth
+      # party ("auth", "permissionless", "attestation", ...), or is missing
+      # one entirely.
+      - name: Guard public method auth doc comments
+        run: bash .github/scripts/check_auth_docs.sh

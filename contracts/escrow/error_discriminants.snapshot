@@ -1,0 +1,54 @@
+# Pinned `Error` discriminant mapping for HarvestLock escrow.
+#
+# Purpose: guard the `#[contracterror] Error` enum's numbering stability
+# (manual audit: #84, automated by CI: #126). A live client holding an old
+# error code must still get the right meaning, so no existing variant may
+# ever be renumbered or reused, and new variants must only be appended at
+# the terminal discriminant (max + 1, + 2, ...).
+#
+# Format: one `Variant = discriminant` per line, in source order.
+# CI (.github/scripts/check_error_discriminants.sh) fails if:
+#   - any variant lacks an explicit `= N`,
+#   - discriminants are not exactly 1..N in source order, or
+#   - the file's first K lines (K = this snapshot's length) do not exactly
+#     match the enum's first K variants (i.e. a non-terminal insert or a
+#     renumber happened).
+#
+# When adding a new error: append it to the enum with the next discriminant
+# AND append the same line here, in the same PR.
+AlreadyInitialized = 1
+NotInitialized = 2
+InvalidState = 3
+InvalidBps = 4
+ZeroAmount = 5
+InvalidWindow = 6
+NotYetOpened = 7
+AlreadyClaimed = 8
+AlreadyExpired = 9
+ClaimWindowPassed = 10
+ClaimWindowNotPassed = 11
+TrancheUnresolved = 12
+RemainderAlreadyFunded = 13
+RemainderWindowPassed = 14
+RemainderWindowNotPassed = 15
+RemainderNotFunded = 16
+DeliveryDeadlineNotPassed = 17
+InvalidQuantity = 18
+InvalidGradeSchedule = 19
+InvalidGradeIndex = 20
+AllocationAlreadySet = 21
+InvalidAllocation = 22
+AllocationNotSet = 23
+InvalidOracleConfig = 24
+OracleNotConfigured = 25
+OraclePriceUnavailable = 26
+OracleStale = 27
+FxAlreadyResolved = 28
+FxNotResolved = 29
+FxShortfallUnfunded = 30
+NoFxShortfall = 31
+FxShortfallAlreadyFunded = 32
+FxShortfallWindowPassed = 33
+FxShortfallWindowNotPassed = 34
+NotAParty = 35
+DisputeWindowNotPassed = 36
