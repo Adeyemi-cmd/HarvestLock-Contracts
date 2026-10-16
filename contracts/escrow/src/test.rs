@@ -2232,3 +2232,168 @@ fn commitment_struct_footprint_and_field_invariants() {
     assert_eq!(c.dispute_pre_status, Status::Draft);
     assert_eq!(c.dispute_deadline, 0);
 }
+
+// ---------- edge cases #130-133 ----------
+
+#[test]
+fn set_allocation_with_duplicate_member_hashes_is_stored_verbatim() {
+    // Edge case #130: two allocation members whose phone numbers hash to
+    // the same BytesN<32> under different salts. A genuine collision is
+    // astronomically unlikely, but set_allocation performs no
+    // dedup/uniqueness check on member_hash — it only rejects an empty
+    // list or a share_bps sum over 10_000. Confirm both identical-hash
+    // entries are silently accepted and stored verbatim.
+    let s = setup(1_500, 1_500);
+    let colliding_hash = BytesN::random(&s.env); // stand-in for the colliding hash
+    let members = Vec::from_array(
+        &s.env,
+        [
+            AllocationMember {
+                member_hash: colliding_hash.clone(),
+                share_bps: 5_000,
+            },
+            AllocationMember {
+                member_hash: colliding_hash.clone(),
+                share_bps: 5_000,
+            },
+        ],
+    );
+
+    s.contract.set_allocation(&members);
+
+    let stored = s.contract.get_allocation();
+    assert_eq!(stored.len(), 2);
+    assert_eq!(stored.get(0).unwrap().member_hash, colliding_hash);
+    assert_eq!(stored.get(1).unwrap().member_hash, colliding_hash);
+    assert_eq!(stored.get(0).unwrap().share_bps, 5_000);
+    assert_eq!(stored.get(1).unwrap().share_bps, 5_000);
+}
+
+#[test]
+fn release_and_claim_advance_1_with_zero_bps_moves_no_funds() {
+    // Edge case #131: advance1_bps = 0 is valid per the
+    // advance1_bps + advance2_bps <= 10_000 rule. Releasing the zero-sized
+    // tranche opens its window normally, and claiming succeeds while
+    // moving no funds — the zero amount is skipped, not treated as an
+    // error — so the rest of the lifecycle proceeds unchanged.
+    let s = setup(0, 2_000);
+    s.contract.lock();
+    let deposit = deposit_amount(s.total_amount, 0, 2_000);
+    assert_eq!(deposit, s.total_amount * 2_000 / 10_000);
+
+    s.contract.release_advance_1();
+
+    assert_eq!(s.contract.get_status(), Status::Advance1Released);
+    assert_eq!(
+        s.contract.get_commitment().advance1_deadline,
+        s.env.ledger().timestamp() + WINDOW
+    );
+
+    s.contract.claim_advance_1();
+
+    assert!(s.contract.get_commitment().advance1_claimed);
+    assert_eq!(s.token.balance(&s.cooperative), 0);
+    assert_eq!(s.token.balance(&s.contract.address), deposit);
+
+    // The zero tranche resolves like any other: the full lifecycle still
+    // completes and pays out exactly total_amount.
+    s.contract.mark_checkpoint();
+    s.contract.release_advance_2();
+    s.contract.claim_advance_2();
+    s.contract.ready_for_delivery();
+    s.contract.fund_remainder();
+    s.contract
+        .confirm_delivery(&CONTRACTED_QUANTITY, &FULL_PRICE_GRADE);
+    s.contract.settle();
+
+    assert_eq!(s.contract.get_status(), Status::Settled);
+    assert_eq!(s.token.balance(&s.cooperative), s.total_amount);
+    assert_eq!(s.token.balance(&s.buyer), 0);
+    assert_eq!(s.token.balance(&s.contract.address), 0);
+}
+
+#[test]
+fn fund_remainder_exact_outstanding_balance_is_accepted() {
+    // Edge case #132: fund_remainder takes no amount argument — it always
+    // computes remainder = total_amount - deposit internally, so
+    // over/under-payment is unreachable by construction (there is no
+    // caller-supplied amount to be "close enough", unlike the FX-adjusted
+    // path which derives its figure from a live oracle rate). This test
+    // pins the exact-match behavior: the buyer is debited exactly the
+    // outstanding remainder, to the stroop.
+    let s = setup(1_500, 2_000); // 35% deposit, 65% remainder
+    s.contract.lock();
+    s.contract.release_advance_1();
+    s.contract.claim_advance_1();
+    s.contract.mark_checkpoint();
+    s.contract.release_advance_2();
+    s.contract.claim_advance_2();
+    s.contract.ready_for_delivery();
+
+    let deposit = deposit_amount(s.total_amount, 1_500, 2_000);
+    let remainder = s.total_amount - deposit;
+    assert_eq!(remainder, 650_000); // exact figure, not an approximation
+    let buyer_before = s.token.balance(&s.buyer);
+    assert_eq!(buyer_before, s.total_amount - deposit);
+
+    s.contract.fund_remainder();
+
+    assert_eq!(s.token.balance(&s.buyer), buyer_before - remainder);
+    assert!(s.contract.get_commitment().remainder_funded);
+    // Contract now holds the full total less what the cooperative already
+    // claimed — every stroop accounted for, nothing created or destroyed.
+    let advance1_amount = s.total_amount * 1_500 / 10_000;
+    let advance2_amount = s.total_amount * 2_000 / 10_000;
+    assert_eq!(
+        s.token.balance(&s.contract.address),
+        s.total_amount - advance1_amount - advance2_amount
+    );
+}
+
+#[test]
+fn dispute_resolve_and_expire_race_leaves_consistent_state_regardless_of_order() {
+    // Edge case #133: expire_dispute_window and resolve_dispute racing for
+    // the same dispute. Soroban executes one transaction first; the winner
+    // restores the pre-dispute status and clears the dispute fields, so the
+    // loser must fail with InvalidState (status is no longer Disputed) —
+    // the end state is identical regardless of submission order, not an
+    // accident of which call landed first.
+
+    // Order A: resolve_dispute wins (before the deadline), expire loses.
+    let s = setup(1_500, 1_500);
+    s.contract.lock();
+    s.contract.release_advance_1();
+    s.contract.flag_dispute(&s.buyer);
+
+    s.contract.resolve_dispute();
+    assert_eq!(s.contract.get_status(), Status::Advance1Released);
+
+    advance_time(&s, REMAINDER_WINDOW + 1); // past when the dispute window would have lapsed
+    let loser = s.contract.try_expire_dispute_window();
+    assert_eq!(loser, Err(Ok(Error::InvalidState)));
+    assert_eq!(s.contract.get_status(), Status::Advance1Released);
+    assert_eq!(
+        s.contract.get_commitment().dispute_pre_status,
+        Status::Draft
+    );
+    assert_eq!(s.contract.get_commitment().dispute_deadline, 0);
+
+    // Order B: expire_dispute_window wins (after the deadline), resolve loses.
+    let s2 = setup(1_500, 1_500);
+    s2.contract.lock();
+    s2.contract.release_advance_1();
+    s2.contract.flag_dispute(&s2.buyer);
+    advance_time(&s2, REMAINDER_WINDOW + 1);
+
+    s2.contract.expire_dispute_window();
+    assert_eq!(s2.contract.get_status(), Status::Advance1Released);
+
+    let loser2 = s2.contract.try_resolve_dispute();
+    assert_eq!(loser2, Err(Ok(Error::InvalidState)));
+    assert_eq!(s2.contract.get_status(), Status::Advance1Released);
+    assert_eq!(
+        s2.contract.get_commitment().dispute_pre_status,
+        Status::Draft
+    );
+    assert_eq!(s2.contract.get_commitment().dispute_deadline, 0);
+}
