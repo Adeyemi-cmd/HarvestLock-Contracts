@@ -783,7 +783,7 @@ if it doesn't, trust the code and the test output over this file, and fix
 this file to match before doing anything else.
 
 ---
-*Last updated: 16 Oct 2026 — profiled `confirm_delivery()`'s `settlement_bps` storage access pattern (#142): confirmed exactly one instance storage read (`Self::load` on entry) and one instance storage write (`Self::save` upon state transition to `Delivered`). All validation checks, proportional shortfall calculations, and grade basis-point multiplications execute strictly in-memory. Added explicit doc comments in `lib.rs` and verification test coverage in `test.rs` ensuring storage invariants are permanently asserted.
+*Last updated: 16 Oct 2026 — audited Commitment struct on-chain footprint (#143): conducted a comprehensive field-by-field necessity review across all 32 fields. Confirmed that every field serves an active role in state transition enforcement, auth checks, financial payout calculations, or dispute recovery, and cannot be derived off-chain because smart contracts cannot query historical events. Retained struct as-is to preserve off-chain API compatibility and avoid instruction overhead from bitmask packing. Documented findings in `lib.rs` and added initialization invariant test coverage in `test.rs`.
 
 Prior entry: 6 Sept 2026 (later same day) — dispute flagging with
 defined escalation (PRD must-have), Deployment 10:
