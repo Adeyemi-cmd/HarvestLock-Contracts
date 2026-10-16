@@ -2193,3 +2193,34 @@ fn dispute_does_not_pause_an_already_ticking_deadline_known_limitation() {
     let advance1_amount = s.total_amount * 1_500 / 10_000;
     assert_eq!(s.token.balance(&s.buyer), s.total_amount - deposit + advance1_amount);
 }
+
+#[test]
+fn confirm_delivery_and_allocation_ledger_are_strictly_independent() {
+    // Verifies Issue #145: confirm_delivery's grade_index selects into grade_price_bps
+    // (quality tiers) and is completely independent of the allocation ledger's member count.
+    let s = setup(1_500, 1_500);
+
+    // Set an allocation ledger with exactly 2 members (indices 0 and 1)
+    let members = Vec::from_array(
+        &s.env,
+        [member(&s.env, 6_000), member(&s.env, 4_000)],
+    );
+    s.contract.set_allocation(&members);
+
+    s.contract.lock();
+    advance_to_remainder_funded(&s);
+
+    // grade_index = 2 is valid in GRADE_PRICE_BPS (3 tiers: indices 0, 1, 2),
+    // even though it exceeds the allocation member count (2 members: indices 0, 1).
+    // Proves grade_index is not bounded or coupled to allocation ledger length.
+    s.contract.confirm_delivery(&CONTRACTED_QUANTITY, &2);
+
+    let c = s.contract.get_commitment();
+    assert_eq!(c.grade_index, 2);
+    assert_eq!(c.settlement_bps, 7_500); // 100% quantity * 7,500 bps grade 2 multiplier
+    assert_eq!(c.status, Status::Delivered);
+
+    // The allocation ledger remains intact and unchanged
+    let alloc = s.contract.get_allocation();
+    assert_eq!(alloc.len(), 2);
+}

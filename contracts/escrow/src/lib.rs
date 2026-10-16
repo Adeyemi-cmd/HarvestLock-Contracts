@@ -596,6 +596,11 @@ impl EscrowContract {
     /// commitment shape, not a decision this session is making
     /// unilaterally. Cooperative-gated, not buyer-consented — this is the
     /// cooperative's own membership data, not a term the buyer negotiates.
+    ///
+    /// **Independence from delivery grading**: the member list and its count
+    /// are strictly internal to cooperative entitlement tracking and have no
+    /// coupling with `confirm_delivery`'s `grade_index` (which indexes the
+    /// quality pricing schedule `grade_price_bps`).
     pub fn set_allocation(env: Env, members: Vec<AllocationMember>) -> Result<(), Error> {
         let c = Self::load(&env)?;
         if c.status != Status::Draft {
@@ -870,6 +875,14 @@ impl EscrowContract {
     /// against. The warehouse operator's attestation is authoritative here
     /// — a grade or quantity dispute is the operator's own appeals
     /// process, not a HarvestLock dispute (PRD's edge-case table).
+    ///
+    /// **Independence from allocation ledger**: `grade_index` indexes
+    /// strictly into the pre-agreed quality tier schedule `grade_price_bps`
+    /// (PRD §7 commodity grading) and is completely independent of the
+    /// cooperative's member allocation ledger (`set_allocation`). Quality
+    /// tier selection is never validated against member count: member count
+    /// tracks farmer pooling shares off-chain, whereas `grade_index` reflects
+    /// commodity quality at warehouse delivery.
     pub fn confirm_delivery(env: Env, delivered_quantity: u32, grade_index: u32) -> Result<(), Error> {
         let mut c = Self::load(&env)?;
         if c.status != Status::ReadyForDelivery {

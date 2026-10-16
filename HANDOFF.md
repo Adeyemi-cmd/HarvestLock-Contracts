@@ -783,7 +783,9 @@ if it doesn't, trust the code and the test output over this file, and fix
 this file to match before doing anything else.
 
 ---
-*Last updated: 6 Sept 2026 (later same day) — dispute flagging with
+*Last updated: 16 Oct 2026 — documented intentional independence of confirm_delivery's grade_index and the allocation ledger (#145): confirmed that `grade_index` indexes into `grade_price_bps` (commodity quality tiers established at initialize) and is completely independent of `set_allocation`'s member count (cooperative farmer pooling shares). Validating `grade_index` against member count would be a critical bug for unpooled/solo-farmer commitments or where member count does not equal tier count. Added explicit doc comments in `lib.rs` and verification test in `test.rs`.
+
+Prior entry: 6 Sept 2026 (later same day) — dispute flagging with
 defined escalation (PRD must-have), Deployment 10:
 `flag_dispute`/`resolve_dispute`/`expire_dispute_window`. Closes the
 "no dispute path" item that's existed since the very first version of
