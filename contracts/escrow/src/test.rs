@@ -1,8 +1,8 @@
 #![cfg(test)]
 
 use super::*;
-use soroban_sdk::testutils::{Address as _, BytesN as _, Ledger as _};
-use soroban_sdk::Env;
+use soroban_sdk::testutils::{Address as _, BytesN as _, Ledger as _, MockAuth, MockAuthInvoke};
+use soroban_sdk::{Env, IntoVal, Val};
 
 const WINDOW: u64 = 7 * 24 * 60 * 60; // 7 days, arbitrary but realistic
 const REMAINDER_WINDOW: u64 = 7 * 24 * 60 * 60; // 7 days — matches the app-level default
@@ -50,15 +50,30 @@ fn setup_with_window(advance1_bps: u32, advance2_bps: u32, window: u64) -> Setup
     let buyer = Address::generate(&env);
     let cooperative = Address::generate(&env);
     let warehouse = Address::generate(&env);
-    let token_admin = Address::generate(&env);
+    setup_in(&env, buyer, cooperative, warehouse, advance1_bps, advance2_bps, window)
+}
 
-    let (token_address, token, token_admin_client) = create_token(&env, &token_admin);
+/// The identity-agnostic half of `setup_with_window` — generates nothing, so
+/// tests that need a specific (including degenerate) set of named parties can
+/// pass their own addresses in. See `setup_shaped` and the auth-model tests.
+fn setup_in(
+    env: &Env,
+    buyer: Address,
+    cooperative: Address,
+    warehouse: Address,
+    advance1_bps: u32,
+    advance2_bps: u32,
+    window: u64,
+) -> Setup<'static> {
+    let token_admin = Address::generate(env);
+
+    let (token_address, token, token_admin_client) = create_token(env, &token_admin);
 
     let total_amount: i128 = 1_000_000; // arbitrary stroops-equivalent units
     token_admin_client.mint(&buyer, &total_amount);
 
     let contract_id = env.register(EscrowContract, ());
-    let contract = EscrowContractClient::new(&env, &contract_id);
+    let contract = EscrowContractClient::new(env, &contract_id);
 
     contract.initialize(
         &buyer,
@@ -72,18 +87,65 @@ fn setup_with_window(advance1_bps: u32, advance2_bps: u32, window: u64) -> Setup
         &REMAINDER_WINDOW,
         &DELIVERY_WINDOW,
         &CONTRACTED_QUANTITY,
-        &Vec::from_array(&env, GRADE_PRICE_BPS),
+        &Vec::from_array(env, GRADE_PRICE_BPS),
         &None,
     );
 
     Setup {
-        env,
+        env: env.clone(),
         contract,
         token,
         buyer,
         cooperative,
         warehouse,
         total_amount,
+    }
+}
+
+/// Which of the three named parties deliberately share an address, for the
+/// auth-model tests. `initialize` does not reject any of these shapes (a
+/// cooperative that also runs the warehouse is a realistic single operator;
+/// the all-identical case is covered by its own companion issue) — these
+/// exist so the auth checks' behavior under them is proven, not assumed.
+#[derive(Clone, Copy)]
+enum PartyShape {
+    /// Three genuinely distinct addresses.
+    Distinct,
+    /// One address is both buyer and warehouse operator.
+    BuyerIsWarehouse,
+    /// One address is both buyer and cooperative.
+    BuyerIsCooperative,
+    /// One address is all three named parties.
+    AllSame,
+}
+
+fn setup_shaped(shape: PartyShape) -> Setup<'static> {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let a = Address::generate(&env);
+    let b = Address::generate(&env);
+    let c = Address::generate(&env);
+    let (buyer, cooperative, warehouse) = match shape {
+        PartyShape::Distinct => (a, b, c),
+        PartyShape::BuyerIsWarehouse => (a.clone(), b, a),
+        PartyShape::BuyerIsCooperative => (a.clone(), a, c),
+        PartyShape::AllSame => (a.clone(), a.clone(), a),
+    };
+    setup_in(&env, buyer, cooperative, warehouse, 1_500, 1_500, WINDOW)
+}
+
+/// A `MockAuth`-compatible invocation descriptor: the exact contract, method,
+/// and serialized arguments that an authorization entry is scoped to. Soroban
+/// binds each auth entry to a specific invocation tree (contract + fn_name +
+/// args, plus sub-invocations), which is what makes replaying a signature
+/// against a different method or different arguments impossible (#141).
+fn mock_invoke<'a>(contract: &'a Address, fn_name: &'a str, args: Vec<Val>) -> MockAuthInvoke<'a> {
+    MockAuthInvoke {
+        contract,
+        fn_name,
+        args,
+        sub_invokes: &[],
     }
 }
 
@@ -2222,6 +2284,387 @@ fn dispute_does_not_pause_an_already_ticking_deadline_known_limitation() {
     let deposit = deposit_amount(s.total_amount, 1_500, 1_500);
     let advance1_amount = s.total_amount * 1_500 / 10_000;
     assert_eq!(s.token.balance(&s.buyer), s.total_amount - deposit + advance1_amount);
+}
+
+// ---------- multi-party Soroban auth model scrutiny (#138-#141) ----------
+//
+// The tests above run under `mock_all_auths()`, which makes every
+// `require_auth()` succeed and therefore can say nothing about *rejection*.
+// The tests below deliberately drop into `mock_auths(&[...])`, which mocks only
+// the exact invocations listed and fails every other `require_auth()` — that is
+// what lets the auth-shape claims in these four issues be proven rather than
+// asserted. `mock_auths` is installed *after* setup, so state can still be
+// driven into place under `mock_all_auths` first.
+
+/// #138 — a staged multi-party proposal whose signature-expiration ledger
+/// lapses before every party has signed.
+///
+/// In the off-chain staging flow each party signs its own auth entry at its own
+/// time. If one entry's `signature_expiration_ledger` is reached before the last
+/// co-signer submits, the submission must fail cleanly and must not half-apply.
+///
+/// On-chain this is enforced by the host, not by this contract: the expiry is
+/// checked while the auth entry is verified, before `resolve_dispute`'s body
+/// runs at all. The failure therefore surfaces as a host/Auth invocation error
+/// (`InvokeError::Abort` here) — the same shape any missing signature produces —
+/// not a confusing contract-returned `Error`. Because the rejected auth aborts
+/// the whole invocation, none of `resolve_dispute`'s state writes land.
+#[test]
+fn expired_staged_auth_entry_fails_cleanly_with_no_partial_state() {
+    let s = setup(1_500, 1_500);
+    s.contract.lock();
+    s.contract.flag_dispute(&s.buyer);
+    let before = s.contract.get_commitment();
+
+    let invoke = mock_invoke(&s.contract.address, "resolve_dispute", ().into_val(&s.env));
+    s.env.mock_auths(&[
+        MockAuth {
+            address: &s.buyer,
+            invoke: &invoke,
+        },
+        MockAuth {
+            address: &s.cooperative,
+            invoke: &invoke,
+        },
+        MockAuth {
+            address: &s.warehouse,
+            invoke: &invoke,
+        },
+    ]);
+    // `mock_auths` stamps every entry with
+    // `signature_expiration_ledger = current_sequence + max_entry_ttl`. Advance
+    // one ledger past that, so every staged entry is genuinely expired.
+    s.env
+        .ledger()
+        .set_sequence_number(s.env.storage().max_ttl() + 1);
+
+    let result = s.contract.try_resolve_dispute();
+    assert!(
+        matches!(result, Err(Err(_))),
+        "an expired auth entry must fail as a host auth error, not a contract error: {result:?}"
+    );
+
+    // Atomicity: the invocation's state writes were rolled back with it.
+    let after = s.contract.get_commitment();
+    assert_eq!(after.status, Status::Disputed);
+    assert_eq!(after.dispute_pre_status, before.dispute_pre_status);
+    assert_eq!(after.dispute_deadline, before.dispute_deadline);
+}
+
+/// #139 — the same address legitimately holding two of the three named roles
+/// (here buyer == warehouse_operator, cooperative distinct).
+///
+/// Soroban auth is per-address. The shared address's single entry satisfies
+/// both of the `require_auth()` calls that name it — correctly, because it is
+/// one genuine principal, and a contract cannot (and should not) demand two
+/// distinct signatures from one key. What must not happen is one address's
+/// signature standing in for a *different* party: the distinct cooperative's
+/// own consent is still required, and a single signature is never counted as
+/// two separate parties' agreement.
+#[test]
+fn two_of_three_identical_parties_still_require_the_distinct_partys_auth() {
+    let s = setup_shaped(PartyShape::BuyerIsWarehouse);
+    // Sanity-check the shape the test is actually exercising.
+    assert_eq!(s.buyer, s.warehouse);
+    assert_ne!(s.cooperative, s.buyer);
+
+    s.contract.lock();
+    s.contract.flag_dispute(&s.buyer);
+
+    let invoke = mock_invoke(&s.contract.address, "resolve_dispute", ().into_val(&s.env));
+    let shared = s.buyer.clone(); // == s.warehouse
+
+    // Only the shared buyer/warehouse address authorizes. The distinct
+    // cooperative's separate consent is missing, so the call must fail.
+    s.env.mock_auths(&[MockAuth {
+        address: &shared,
+        invoke: &invoke,
+    }]);
+    let result = s.contract.try_resolve_dispute();
+    assert!(
+        result.is_err(),
+        "the distinct cooperative's signature must still be required: {result:?}"
+    );
+    assert_eq!(s.contract.get_status(), Status::Disputed);
+
+    // Two real signatures now — one for the shared buyer/warehouse principal,
+    // one for the cooperative — are enough, because two addresses hold the
+    // three roles. No third signature is invented for the duplicate role.
+    s.env.mock_auths(&[
+        MockAuth {
+            address: &shared,
+            invoke: &invoke,
+        },
+        MockAuth {
+            address: &s.cooperative,
+            invoke: &invoke,
+        },
+    ]);
+    s.contract.resolve_dispute();
+    assert_eq!(s.contract.get_status(), Status::Locked);
+}
+
+/// #139, the `cancel` half of the same principle: when the buyer and the
+/// cooperative are one and the same principal, `cancel` needs that principal's
+/// one genuine signature — not two impossible-to-produce ones for the same key
+/// — and must still reject a stranger.
+///
+/// This is the method the duplicate-`require_auth()` bug bit most directly:
+/// before the fix, the second `require_auth()` on the shared address aborted
+/// the whole call under enforcing auth, so a realistic buyer/cooperative
+/// operator could never cancel.
+#[test]
+fn cancel_succeeds_when_buyer_and_cooperative_share_one_address() {
+    let s = setup_shaped(PartyShape::BuyerIsCooperative);
+    assert_eq!(s.buyer, s.cooperative);
+    s.contract.lock();
+
+    let invoke = mock_invoke(&s.contract.address, "cancel", ().into_val(&s.env));
+    let stranger = Address::generate(&s.env);
+
+    // A stranger's signature satisfies neither role.
+    s.env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &invoke,
+    }]);
+    assert!(s.contract.try_cancel().is_err());
+    assert_eq!(s.contract.get_status(), Status::Locked);
+
+    // The shared principal's single signature is the whole requirement.
+    s.env.mock_auths(&[MockAuth {
+        address: &s.buyer,
+        invoke: &invoke,
+    }]);
+    s.contract.cancel();
+    assert_eq!(s.contract.get_status(), Status::Cancelled);
+    assert_eq!(s.token.balance(&s.buyer), s.total_amount);
+}
+
+/// #139, the `reassign_buyer` half. With buyer == cooperative, the two
+/// outgoing-position signatures collapse into one principal; the incoming
+/// buyer's own signature is still separately required.
+#[test]
+fn reassign_buyer_succeeds_when_buyer_and_cooperative_share_one_address() {
+    let s = setup_shaped(PartyShape::BuyerIsCooperative);
+    assert_eq!(s.buyer, s.cooperative);
+    s.contract.lock();
+    let new_buyer = Address::generate(&s.env);
+
+    let invoke = mock_invoke(
+        &s.contract.address,
+        "reassign_buyer",
+        (new_buyer.clone(),).into_val(&s.env),
+    );
+
+    // The shared principal alone is not enough — the incoming buyer must
+    // consent to receiving the position.
+    s.env.mock_auths(&[MockAuth {
+        address: &s.buyer,
+        invoke: &invoke,
+    }]);
+    assert!(s.contract.try_reassign_buyer(&new_buyer).is_err());
+    assert_eq!(s.contract.get_commitment().buyer, s.buyer);
+
+    // Shared principal + incoming buyer: two genuine signatures for three
+    // roles, and no duplicate-signature abort.
+    s.env.mock_auths(&[
+        MockAuth {
+            address: &s.buyer,
+            invoke: &invoke,
+        },
+        MockAuth {
+            address: &new_buyer,
+            invoke: &invoke,
+        },
+    ]);
+    s.contract.reassign_buyer(&new_buyer);
+    assert_eq!(s.contract.get_commitment().buyer, new_buyer);
+}
+
+/// #140 — `resolve_dispute`'s three-party auth with three genuinely distinct
+/// addresses.
+///
+/// Two of the three is not enough; three distinct signatures are required. A
+/// single key can never stand in for the other two when the addresses differ.
+#[test]
+fn resolve_dispute_requires_three_distinct_signatures_when_parties_are_distinct() {
+    let s = setup_shaped(PartyShape::Distinct);
+    assert_ne!(s.buyer, s.cooperative);
+    assert_ne!(s.cooperative, s.warehouse);
+    assert_ne!(s.buyer, s.warehouse);
+
+    s.contract.lock();
+    s.contract.flag_dispute(&s.buyer);
+
+    let invoke = mock_invoke(&s.contract.address, "resolve_dispute", ().into_val(&s.env));
+
+    // Buyer + cooperative only — the warehouse operator's consent is missing.
+    s.env.mock_auths(&[
+        MockAuth {
+            address: &s.buyer,
+            invoke: &invoke,
+        },
+        MockAuth {
+            address: &s.cooperative,
+            invoke: &invoke,
+        },
+    ]);
+    let result = s.contract.try_resolve_dispute();
+    assert!(
+        result.is_err(),
+        "two of three distinct parties must not be enough: {result:?}"
+    );
+    assert_eq!(s.contract.get_status(), Status::Disputed);
+
+    // All three distinct parties.
+    s.env.mock_auths(&[
+        MockAuth {
+            address: &s.buyer,
+            invoke: &invoke,
+        },
+        MockAuth {
+            address: &s.cooperative,
+            invoke: &invoke,
+        },
+        MockAuth {
+            address: &s.warehouse,
+            invoke: &invoke,
+        },
+    ]);
+    s.contract.resolve_dispute();
+    assert_eq!(s.contract.get_status(), Status::Locked);
+}
+
+/// The all-identical companion case: when one address genuinely holds all three
+/// roles, one signature is the only thing there is to require — the contract
+/// cannot conjure two more distinct signers for one principal. What matters is
+/// that it does not accept some *other* address's signature in that principal's
+/// place.
+#[test]
+fn all_three_identical_parties_accept_only_that_principals_signature() {
+    let s = setup_shaped(PartyShape::AllSame);
+    assert_eq!(s.buyer, s.cooperative);
+    assert_eq!(s.cooperative, s.warehouse);
+
+    s.contract.lock();
+    s.contract.flag_dispute(&s.buyer);
+
+    let invoke = mock_invoke(&s.contract.address, "resolve_dispute", ().into_val(&s.env));
+    let stranger = Address::generate(&s.env);
+
+    // A stranger's signature satisfies none of the three role checks.
+    s.env.mock_auths(&[MockAuth {
+        address: &stranger,
+        invoke: &invoke,
+    }]);
+    assert!(s.contract.try_resolve_dispute().is_err());
+    assert_eq!(s.contract.get_status(), Status::Disputed);
+
+    // The one real principal's signature satisfies all three.
+    s.env.mock_auths(&[MockAuth {
+        address: &s.buyer,
+        invoke: &invoke,
+    }]);
+    s.contract.resolve_dispute();
+    assert_eq!(s.contract.get_status(), Status::Locked);
+}
+
+/// #141 — an auth entry for one method must not authorize a different method on
+/// the same contract instance.
+///
+/// A warehouse-operator entry scoped to `confirm_delivery` is rejected when
+/// presented to `mark_checkpoint`, even though both are warehouse-gated methods
+/// on this same contract. Only an entry scoped to `mark_checkpoint` is accepted.
+#[test]
+fn auth_entry_for_one_method_cannot_authorize_a_different_method() {
+    let s = setup(1_500, 1_500);
+    s.contract.lock();
+    s.contract.release_advance_1();
+
+    let wrong = mock_invoke(
+        &s.contract.address,
+        "confirm_delivery",
+        (CONTRACTED_QUANTITY, FULL_PRICE_GRADE).into_val(&s.env),
+    );
+    s.env.mock_auths(&[MockAuth {
+        address: &s.warehouse,
+        invoke: &wrong,
+    }]);
+    let result = s.contract.try_mark_checkpoint();
+    assert!(
+        result.is_err(),
+        "a confirm_delivery-scoped entry must not authorize mark_checkpoint: {result:?}"
+    );
+    assert_eq!(s.contract.get_status(), Status::Advance1Released);
+
+    let right = mock_invoke(&s.contract.address, "mark_checkpoint", ().into_val(&s.env));
+    s.env.mock_auths(&[MockAuth {
+        address: &s.warehouse,
+        invoke: &right,
+    }]);
+    s.contract.mark_checkpoint();
+    assert_eq!(s.contract.get_status(), Status::CheckpointPassed);
+}
+
+/// #141, the argument half: an auth entry is bound to the exact serialized
+/// arguments of the invocation, not just the method name.
+///
+/// Consent to reassign the buyer position to one address must not authorize
+/// reassigning it to a different address.
+#[test]
+fn auth_entry_for_one_argument_set_cannot_authorize_a_different_argument_set() {
+    let s = setup(1_500, 1_500);
+    s.contract.lock();
+    let approved = Address::generate(&s.env);
+    let substituted = Address::generate(&s.env);
+
+    // Every signer consents to `reassign_buyer(approved)` ...
+    let for_approved = mock_invoke(
+        &s.contract.address,
+        "reassign_buyer",
+        (approved.clone(),).into_val(&s.env),
+    );
+    s.env.mock_auths(&[
+        MockAuth {
+            address: &s.buyer,
+            invoke: &for_approved,
+        },
+        MockAuth {
+            address: &s.cooperative,
+            invoke: &for_approved,
+        },
+        MockAuth {
+            address: &approved,
+            invoke: &for_approved,
+        },
+    ]);
+
+    // ... but the call substitutes a different `new_buyer`. The entries do not
+    // match the actual invocation's arguments, so it must be rejected.
+    let result = s.contract.try_reassign_buyer(&substituted);
+    assert!(
+        result.is_err(),
+        "consent for a different new_buyer argument must not transfer: {result:?}"
+    );
+    assert_eq!(s.contract.get_commitment().buyer, s.buyer);
+
+    // The original, correctly-scoped consent still works.
+    s.env.mock_auths(&[
+        MockAuth {
+            address: &s.buyer,
+            invoke: &for_approved,
+        },
+        MockAuth {
+            address: &s.cooperative,
+            invoke: &for_approved,
+        },
+        MockAuth {
+            address: &approved,
+            invoke: &for_approved,
+        },
+    ]);
+    s.contract.reassign_buyer(&approved);
+    assert_eq!(s.contract.get_commitment().buyer, approved);
 }
 
 #[test]
