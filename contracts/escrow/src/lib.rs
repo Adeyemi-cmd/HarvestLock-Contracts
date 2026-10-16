@@ -561,6 +561,8 @@ impl EscrowContract {
     }
 
     /// The configured oracle, if `initialize` set one.
+    ///
+    /// No auth required — read-only view, callable by anyone.
     pub fn get_oracle_config(env: Env) -> Result<Option<OracleConfig>, Error> {
         let _ = Self::load(&env)?; // NotInitialized if the commitment itself doesn't exist
         Ok(env.storage().instance().get(&DataKey::OracleConfig))
@@ -570,6 +572,8 @@ impl EscrowContract {
     /// asset, enforcing the staleness bound. A pure read against
     /// Reflector's own stored history, not a state transition — callable
     /// in any status, including after `Settled`.
+    ///
+    /// No auth required — permissionless read.
     pub fn oracle_rate(env: Env) -> Result<OracleRate, Error> {
         let _ = Self::load(&env)?;
         let config: OracleConfig = env
@@ -649,6 +653,8 @@ impl EscrowContract {
     }
 
     /// The recorded allocation ledger, if `set_allocation` has run.
+    ///
+    /// No auth required — read-only view, callable by anyone.
     pub fn get_allocation(env: Env) -> Result<Vec<AllocationMember>, Error> {
         let _ = Self::load(&env)?; // NotInitialized if the commitment itself doesn't exist
         env.storage()
@@ -713,12 +719,14 @@ impl EscrowContract {
         Self::open_tranche(&env, Tranche::One, Status::Locked, Status::Advance1Released)
     }
 
-    /// Cooperative claims tranche 1, if within the window.
+    /// Cooperative claims tranche 1, if within the window. Requires
+    /// cooperative auth.
     pub fn claim_advance_1(env: Env) -> Result<(), Error> {
         Self::claim_tranche(&env, Tranche::One)
     }
 
     /// Buyer reclaims tranche 1, if the window has passed unclaimed.
+    /// Requires buyer auth.
     pub fn reclaim_advance_1(env: Env) -> Result<(), Error> {
         Self::reclaim_tranche(&env, Tranche::One)
     }
@@ -740,7 +748,9 @@ impl EscrowContract {
     }
 
     /// CheckpointPassed -> Advance2Released. Same mechanics as
-    /// `release_advance_1`, for tranche 2.
+    /// `release_advance_1`, for tranche 2. Permissionless like
+    /// `release_advance_1` — deliberately not auth-gated, it only starts
+    /// a clock.
     pub fn release_advance_2(env: Env) -> Result<(), Error> {
         Self::open_tranche(
             &env,
@@ -750,10 +760,14 @@ impl EscrowContract {
         )
     }
 
+    /// Cooperative claims tranche 2, if within the window. Requires
+    /// cooperative auth — same mechanics as `claim_advance_1`.
     pub fn claim_advance_2(env: Env) -> Result<(), Error> {
         Self::claim_tranche(&env, Tranche::Two)
     }
 
+    /// Buyer reclaims tranche 2, if the window has passed unclaimed.
+    /// Requires buyer auth — same mechanics as `reclaim_advance_1`.
     pub fn reclaim_advance_2(env: Env) -> Result<(), Error> {
         Self::reclaim_tranche(&env, Tranche::Two)
     }
@@ -779,7 +793,8 @@ impl EscrowContract {
     /// Buyer escrows `total_amount - deposit` — the second half of
     /// two-phase funding. Must happen within the window
     /// `ready_for_delivery` opened, or it's a default (see
-    /// `expire_remainder_window`).
+    /// `expire_remainder_window`). Requires buyer auth — this is new
+    /// money the buyer specifically owes.
     pub fn fund_remainder(env: Env) -> Result<(), Error> {
         let mut c = Self::load(&env)?;
         if c.status != Status::ReadyForDelivery {
@@ -898,6 +913,7 @@ impl EscrowContract {
     /// against. The warehouse operator's attestation is authoritative here
     /// — a grade or quantity dispute is the operator's own appeals
     /// process, not a HarvestLock dispute (PRD's edge-case table).
+    /// Requires warehouse_operator auth.
     pub fn confirm_delivery(env: Env, delivered_quantity: u32, grade_index: u32) -> Result<(), Error> {
         let mut c = Self::load(&env)?;
         if c.status != Status::ReadyForDelivery {
@@ -961,6 +977,9 @@ impl EscrowContract {
     /// (`FxShortfallUnfunded`) — same "explicit resolution required,
     /// never inferred" principle the tranche-resolution requirement
     /// above already established for this function.
+    ///
+    /// Permissionless — no auth required: the payout math depends only on
+    /// already-recorded state, not on who triggers it.
     pub fn settle(env: Env) -> Result<(), Error> {
         let mut c = Self::load(&env)?;
         if c.status != Status::Delivered {
@@ -1293,6 +1312,10 @@ impl EscrowContract {
     /// left open on purpose, same bias against building ahead of real
     /// usage this project applies elsewhere; revisit if a real dispute
     /// ever actually collides with another deadline this way.
+    ///
+    /// Requires the flagger's own auth (`flagger.require_auth()`), and
+    /// `flagger` must be the buyer, the cooperative, or the warehouse
+    /// operator.
     pub fn flag_dispute(env: Env, flagger: Address) -> Result<(), Error> {
         let mut c = Self::load(&env)?;
         match c.status {
@@ -1370,10 +1393,12 @@ impl EscrowContract {
         Ok(())
     }
 
+    /// No auth required — read-only view, callable by anyone.
     pub fn get_status(env: Env) -> Result<Status, Error> {
         Ok(Self::load(&env)?.status)
     }
 
+    /// No auth required — read-only view, returns the full commitment state.
     pub fn get_commitment(env: Env) -> Result<Commitment, Error> {
         Self::load(&env)
     }

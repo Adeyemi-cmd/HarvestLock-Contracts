@@ -2232,3 +2232,42 @@ fn commitment_struct_footprint_and_field_invariants() {
     assert_eq!(c.dispute_pre_status, Status::Draft);
     assert_eq!(c.dispute_deadline, 0);
 }
+
+#[test]
+fn cannot_settle_twice_after_already_settled() {
+    // settle() guard prevents re-running: once status is Settled, any
+    // further settle() attempt is rejected via InvalidState, protecting
+    // against double-payout.
+    let s = setup(1_500, 1_500);
+    s.contract.lock();
+    advance_to_remainder_funded(&s);
+    s.contract.confirm_delivery(&CONTRACTED_QUANTITY, &FULL_PRICE_GRADE);
+    s.contract.settle();
+
+    // Second settle should be blocked.
+    let result = s.contract.try_settle();
+    assert_eq!(result, Err(Ok(Error::InvalidState)));
+}
+
+#[test]
+fn confirm_delivery_with_zero_quantity_settlement_bps_zero() {
+    // Zero delivered against a nonzero contracted_quantity is a real
+    // outcome (total non-delivery at attestation). confirm_delivery
+    // should succeed and compute settlement_bps exactly 0, and settle()
+    // should still run cleanly without error.
+    let s = setup(1_500, 1_500);
+    s.contract.lock();
+    advance_to_remainder_funded(&s);
+    s.contract.confirm_delivery(&0, &FULL_PRICE_GRADE);
+
+    let c = s.contract.get_commitment();
+    assert_eq!(c.delivered_quantity, 0);
+    assert_eq!(c.grade_index, FULL_PRICE_GRADE);
+    assert_eq!(c.settlement_bps, 0);
+
+    // settle() should still run — the zero-settlement math just means
+    // the cooperative gets nothing extra from the remainder beyond
+    // already-clamped advances.
+    s.contract.settle();
+    assert_eq!(s.contract.get_status(), Status::Settled);
+}
