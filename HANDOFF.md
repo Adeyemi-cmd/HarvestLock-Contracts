@@ -783,7 +783,9 @@ if it doesn't, trust the code and the test output over this file, and fix
 this file to match before doing anything else.
 
 ---
-*Last updated: 6 Sept 2026 (later same day) — dispute flagging with
+*Last updated: 16 Oct 2026 — audited Commitment struct on-chain footprint (#143): conducted a comprehensive field-by-field necessity review across all 32 fields. Confirmed that every field serves an active role in state transition enforcement, auth checks, financial payout calculations, or dispute recovery, and cannot be derived off-chain because smart contracts cannot query historical events. Retained struct as-is to preserve off-chain API compatibility and avoid instruction overhead from bitmask packing. Documented findings in `lib.rs` and added initialization invariant test coverage in `test.rs`.
+
+Prior entry: 6 Sept 2026 (later same day) — dispute flagging with
 defined escalation (PRD must-have), Deployment 10:
 `flag_dispute`/`resolve_dispute`/`expire_dispute_window`. Closes the
 "no dispute path" item that's existed since the very first version of
