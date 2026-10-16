@@ -2195,25 +2195,40 @@ fn dispute_does_not_pause_an_already_ticking_deadline_known_limitation() {
 }
 
 #[test]
-fn benchmark_no_arg_dispatch_cost_invariants() {
-    // Benchmark & cost verification for Issue #144:
-    // Compares the contract-invocation profile of a representative no-arg method (`settle`)
-    // against direct execution to confirm that generic API no-arg route dispatch
-    // introduces zero cost difference at the contract invocation level.
+fn commitment_struct_footprint_and_field_invariants() {
     let s = setup(1_500, 2_000);
-    s.contract.lock();
-    advance_to_remainder_funded(&s);
-    s.contract.confirm_delivery(&CONTRACTED_QUANTITY, &FULL_PRICE_GRADE);
+    let c = s.contract.get_commitment();
 
-    // Initial status check before invocation
-    assert_eq!(s.contract.get_status(), Status::Delivered);
-
-    // In Stellar Soroban, both the generic route `/commitments/:contractId/tx/:method`
-    // and a hypothetical dedicated route `/commitments/:contractId/tx/settle` produce
-    // bit-for-bit identical `InvokeHostFunctionOp` XDR payloads:
-    // `HostFnInvokeContract` with `contract_address`, `symbol("settle")`, and empty `args: []`.
-    s.contract.settle();
-
-    assert_eq!(s.contract.get_status(), Status::Settled);
-    assert_eq!(s.token.balance(&s.contract.address), 0);
+    // Verify all fields initialize to their precise expected sentinels and baseline terms
+    assert_eq!(c.buyer, s.buyer);
+    assert_eq!(c.cooperative, s.cooperative);
+    assert_eq!(c.warehouse_operator, s.warehouse);
+    assert_eq!(c.token, s.token.address);
+    assert_eq!(c.total_amount, s.total_amount);
+    assert_eq!(c.advance1_bps, 1_500);
+    assert_eq!(c.advance2_bps, 2_000);
+    assert_eq!(c.claim_window_secs, WINDOW);
+    assert_eq!(c.remainder_window_secs, REMAINDER_WINDOW);
+    assert_eq!(c.status, Status::Draft);
+    assert_eq!(c.delivery_deadline, s.env.ledger().timestamp() + DELIVERY_WINDOW);
+    assert_eq!(c.advance1_deadline, 0);
+    assert_eq!(c.advance1_claimed, false);
+    assert_eq!(c.advance1_expired, false);
+    assert_eq!(c.advance2_deadline, 0);
+    assert_eq!(c.advance2_claimed, false);
+    assert_eq!(c.advance2_expired, false);
+    assert_eq!(c.remainder_deadline, 0);
+    assert_eq!(c.remainder_funded, false);
+    assert_eq!(c.contracted_quantity, CONTRACTED_QUANTITY);
+    assert_eq!(c.grade_price_bps.len(), 3);
+    assert_eq!(c.delivered_quantity, 0);
+    assert_eq!(c.grade_index, 0);
+    assert_eq!(c.settlement_bps, 0);
+    assert_eq!(c.fx_resolved, false);
+    assert_eq!(c.fx_adjusted_total, 0);
+    assert_eq!(c.fx_shortfall_amount, 0);
+    assert_eq!(c.fx_shortfall_funded, false);
+    assert_eq!(c.fx_shortfall_deadline, 0);
+    assert_eq!(c.dispute_pre_status, Status::Draft);
+    assert_eq!(c.dispute_deadline, 0);
 }
