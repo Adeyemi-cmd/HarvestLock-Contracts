@@ -93,6 +93,12 @@ workflow; see its comments if that job ever breaks again on a fresh
 runner image). A red badge above means something on `main` is actually
 broken.
 
+Setting this up for the first time and something won't build?
+[`docs/dev-setup-troubleshooting.md`](./docs/dev-setup-troubleshooting.md)
+collects the toolchain failures this repo has already hit and how they were
+fixed — including why `cargo install stellar-cli` fails on Windows and which
+libraries a fresh Linux runner is missing.
+
 ## Reference
 
 - **PRD**: [`docs/PRD.md`](https://github.com/Agrisettle/HarvestLock/blob/main/docs/PRD.md) in the `HarvestLock` repo — see §4.8 (contract design), §4.5 (why this can't hold custody keys), §16.3 (oracle staleness and depeg handling the contract must account for)
