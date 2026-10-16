@@ -870,6 +870,15 @@ impl EscrowContract {
     /// against. The warehouse operator's attestation is authoritative here
     /// — a grade or quantity dispute is the operator's own appeals
     /// process, not a HarvestLock dispute (PRD's edge-case table).
+    ///
+    /// **Storage access pattern**:
+    /// Reads the `Commitment` struct exactly once from instance storage upon
+    /// entry via `Self::load`. All validation checks, shortfall scaling, and
+    /// `settlement_bps` multiplier calculations execute strictly in memory.
+    /// Writes the updated `Commitment` struct exactly once to instance storage
+    /// via `Self::save` upon state transition to `Status::Delivered`. No
+    /// redundant reads or writes occur across the quantity/grade calculation
+    /// or final state-write.
     pub fn confirm_delivery(env: Env, delivered_quantity: u32, grade_index: u32) -> Result<(), Error> {
         let mut c = Self::load(&env)?;
         if c.status != Status::ReadyForDelivery {

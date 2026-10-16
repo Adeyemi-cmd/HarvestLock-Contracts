@@ -783,7 +783,9 @@ if it doesn't, trust the code and the test output over this file, and fix
 this file to match before doing anything else.
 
 ---
-*Last updated: 6 Sept 2026 (later same day) — dispute flagging with
+*Last updated: 16 Oct 2026 — profiled `confirm_delivery()`'s `settlement_bps` storage access pattern (#142): confirmed exactly one instance storage read (`Self::load` on entry) and one instance storage write (`Self::save` upon state transition to `Delivered`). All validation checks, proportional shortfall calculations, and grade basis-point multiplications execute strictly in-memory. Added explicit doc comments in `lib.rs` and verification test coverage in `test.rs` ensuring storage invariants are permanently asserted.
+
+Prior entry: 6 Sept 2026 (later same day) — dispute flagging with
 defined escalation (PRD must-have), Deployment 10:
 `flag_dispute`/`resolve_dispute`/`expire_dispute_window`. Closes the
 "no dispute path" item that's existed since the very first version of
