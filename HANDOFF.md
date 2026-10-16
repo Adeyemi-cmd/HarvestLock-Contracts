@@ -28,9 +28,10 @@ silently reconciling it.
 - Rust `1.97.1`, target `wasm32v1-none` already installed (this is the
   current recommended Soroban target, not the older `wasm32-unknown-unknown`
   — don't "fix" this back).
-- `soroban-sdk = "27.0.6"` — resolved via `cargo add`, not hand-picked.
-  Don't downgrade without a reason; don't upgrade without checking the
-  changelog against this contract's API usage first.
+- `soroban-sdk = "28.0.0"` — bumped from `27.0.6` (itself resolved via
+  `cargo add`, not hand-picked) by dependabot in PR #5, 14 Oct 2026, with
+  both CI jobs green. Don't downgrade without a reason; don't upgrade
+  without checking the changelog against this contract's API usage first.
 - `stellar-cli` **v28.0.0 — installed and confirmed working.** Not via
   `cargo install` — that path is broken on this machine: the default Rust
   host toolchain here is `stable-x86_64-pc-windows-gnu`, and compiling
@@ -121,7 +122,7 @@ last session: `initialize` (now also takes `remainder_window_secs` and
 `reclaim_advance_1`/`_2`, `mark_checkpoint`, `settle`, `get_status`,
 `get_commitment`.
 
-Tests (`src/test.rs`, **129 tests, all passing** — see the "Last updated"
+Tests (`src/test.rs`, **134 tests, all passing** — see the "Last updated"
 entry for the count's history) cover, beyond last session's set: `lock` escrows
 only the deposit, not the full total; `ready_for_delivery` opens the window
 and is cooperative-gated; `fund_remainder` transfers exactly the remainder,
@@ -148,6 +149,12 @@ balance, never claw back what already left).
 **Run it**: `cd contracts/escrow && cargo test`
 
 ## Verified on testnet — twice now, and the second time specifically exercised the new mechanic
+
+Per-deployment summaries live in [`CHANGELOG.md`](./CHANGELOG.md) — dates
+there were verified against the deployed instances, with each WASM hash
+cross-checked against the one named below. This section stays the
+transaction-level walk-through; that one is the index, and this one is the
+record.
 
 **Deployment 1** (prior session, contract `CDUWXPAC2AT353J4UF5WWJVW3ZUMATZH7PGNZ2AEXWOGT2USDRR77JSO`) validated the pre-claimable-balance happy path. Superseded — that contract predates this session's changes and shouldn't be used as a reference for current behavior.
 
@@ -337,7 +344,7 @@ transactions:
    features compose — `Status::Locked` confirmed via a fresh
    `get_status` read.
 
-**Deployment 8** (5 Sept 2026) — WASM hash
+**Deployment 8** (4 Sept 2026) — WASM hash
 `5322b601fc6ea29e4edfaac260573347d6b47672ecaeb5e13e7cbd75ff0afcab`
 (33,488 bytes optimized, 23 exported functions — `oracle_rate`,
 `get_oracle_config` are the two new ones). Uploaded via `stellar
@@ -797,7 +804,28 @@ if it doesn't, trust the code and the test output over this file, and fix
 this file to match before doing anything else.
 
 ---
-*Last updated: 16 Oct 2026 — auth-model scrutiny of the staged multi-party
+*Last updated: 16 Oct 2026 (later same day) — docs-only session, no contract
+code touched. Consolidated the two dev-environment gotchas into
+`docs/dev-setup-troubleshooting.md` (Windows `cargo install stellar-cli`
+failing on a missing `dlltool.exe`, and the two native dev libraries a fresh
+Linux runner needs — dbus-1 for `libdbus-sys`, libudev for `hidapi`,
+discovered one at a time), linked from the README. Extracted the deployment
+history above into `CHANGELOG.md`: Keep a Changelog, one entry per
+deployment, cross-linked here rather than duplicated. The two
+test-verification issues came back **already covered, not gaps** — two of
+three distinct parties on `resolve_dispute` already fails and leaves the
+commitment `Disputed`
+(`resolve_dispute_requires_three_distinct_signatures_when_parties_are_distinct`),
+and a commitment initialized without an `oracle_config` already reads `None`
+(`get_oracle_config_is_none_when_initialize_never_set_one`); both answered
+with a comment naming the test, and no new tests added. Three current-state
+corrections, each so no two docs here contradict each other: **Deployment 8
+is 4 Sept, not 5 Sept** (the instance it names, `CCUDE3MM…`, was created
+2026-09-04 22:16 UTC and its WASM hash matches the one above); the toolchain
+section names `soroban-sdk = "28.0.0"`, which is what `Cargo.toml` says since
+dependabot PR #5; and the test count is 134, not 129 (measured on `main`).
+
+Prior entry: 16 Oct 2026 — auth-model scrutiny of the staged multi-party
 Soroban flow (#138–#141). **#138**: proven a staged auth entry whose
 `signature_expiration_ledger` lapses is rejected *by the host*, before the
 contract body runs — it surfaces as a host auth/`InvokeError::Abort`, not a
