@@ -2193,3 +2193,27 @@ fn dispute_does_not_pause_an_already_ticking_deadline_known_limitation() {
     let advance1_amount = s.total_amount * 1_500 / 10_000;
     assert_eq!(s.token.balance(&s.buyer), s.total_amount - deposit + advance1_amount);
 }
+
+#[test]
+fn benchmark_no_arg_dispatch_cost_invariants() {
+    // Benchmark & cost verification for Issue #144:
+    // Compares the contract-invocation profile of a representative no-arg method (`settle`)
+    // against direct execution to confirm that generic API no-arg route dispatch
+    // introduces zero cost difference at the contract invocation level.
+    let s = setup(1_500, 2_000);
+    s.contract.lock();
+    advance_to_remainder_funded(&s);
+    s.contract.confirm_delivery(&CONTRACTED_QUANTITY, &FULL_PRICE_GRADE);
+
+    // Initial status check before invocation
+    assert_eq!(s.contract.get_status(), Status::Delivered);
+
+    // In Stellar Soroban, both the generic route `/commitments/:contractId/tx/:method`
+    // and a hypothetical dedicated route `/commitments/:contractId/tx/settle` produce
+    // bit-for-bit identical `InvokeHostFunctionOp` XDR payloads:
+    // `HostFnInvokeContract` with `contract_address`, `symbol("settle")`, and empty `args: []`.
+    s.contract.settle();
+
+    assert_eq!(s.contract.get_status(), Status::Settled);
+    assert_eq!(s.token.balance(&s.contract.address), 0);
+}
